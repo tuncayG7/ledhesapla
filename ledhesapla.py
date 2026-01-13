@@ -1,6 +1,12 @@
 import streamlit as st
+import pandas as pd
 import math
 from fpdf import FPDF
+
+# --- AYARLAR ---
+# Sizin verdiğiniz Google Sheet Linki üzerinden CSV çekme yapısı
+SHEET_ID = "1HWfvaJgo_F-JrbQPbQahSUL9EeU8COTo-n1xxkaLfF0"
+SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
 # --- TÜRKÇE KARAKTER DÜZELTME ---
 def tr(text):
@@ -10,100 +16,123 @@ def tr(text):
     return text
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="LED Pro", layout="wide")
+st.set_page_config(page_title="Knexxons LED Configurator", layout="wide", page_icon="🏗️")
 
-# --- VERİ TABANI ---
-DATA = {
-    "İç Mekan (Indoor)": {
-        "Qiangli Q1.8": {"w": 320, "h": 160, "res_w": 172, "res_h": 86, "power": 30, "price": 45},
-        "Qiangli Q2.5": {"w": 320, "h": 160, "res_w": 128, "res_h": 64, "power": 35, "price": 25},
-        "Qiangli Q3": {"w": 192, "h": 192, "res_w": 64, "res_h": 64, "power": 25, "price": 18}
-    },
-    "Dış Mekan (Outdoor)": {
-        "Qiangli P4 Outdoor": {"w": 320, "h": 160, "res_w": 80, "res_h": 40, "power": 45, "price": 35},
-        "Qiangli P10 Outdoor": {"w": 320, "h": 160, "res_w": 32, "res_h": 16, "power": 40, "price": 20}
-    }
-}
+# --- VERİ ÇEKME ---
+@st.cache_data(ttl=60) # Listeyi her 1 dakikada bir kontrol eder
+def load_data():
+    try:
+        df = pd.read_csv(SHEET_URL)
+        df.columns = df.columns.str.strip() # Sütun isimlerindeki boşlukları temizler
+        return df
+    except Exception as e:
+        st.error(f"Google Sheets bağlantısı başarısız: {e}")
+        return None
 
-# --- SOL PANEL (INPUTS) ---
-st.sidebar.header("🔧 PROJE AYARLARI")
-project_name = st.sidebar.text_input("Proje Adı", "Yeni Proje")
-env_type = st.sidebar.radio("Ortam", list(DATA.keys()))
-selected_modul = st.sidebar.selectbox("Modül Seçin", list(DATA[env_type].keys()))
+inventory_df = load_data()
 
-target_w = st.sidebar.number_input("Genişlik (mm)", value=3200)
-target_h = st.sidebar.number_input("Yükseklik (mm)", value=1920)
+if inventory_df is not None:
+    # --- YAN PANEL (INPUTS) ---
+    with st.sidebar:
+        st.title("🛡️ Knexxons Admin")
+        project_name = st.text_input("Proje / Müşteri Adı", "Örnek Teklif")
+        
+        st.divider()
+        st.subheader("📦 Model Seçimi")
+        # Google Sheet'teki "Marka_Model" sütununu baz alır
+        selected_model = st.selectbox("Envanterden Seçin", inventory_df["Marka_Model"].tolist())
+        
+        # Seçili modelin tüm teknik verilerini çek
+        m = inventory_df[inventory_df["Marka_Model"] == selected_model].iloc[0]
+        
+        st.divider()
+        st.subheader("📐 Ekran Ölçüleri")
+        target_w = st.number_input("Hedef Genişlik (mm)", value=3840, step=int(m["Genişlik"]))
+        target_h = st.number_input("Hedef Yükseklik (mm)", value=2160, step=int(m["Yükseklik"]))
+        
+        st.divider()
+        st.subheader("⚙️ Donanım & Kar")
+        psu_amp = st.selectbox("PSU Amper", [40, 60, 80], index=0)
+        profit_pct = st.slider("Kar Marjı (%)", 0, 100, 30)
 
-multi_input = st.sidebar.toggle("Çoklu Giriş (Processor Gerekir)", value=False)
-labor = st.sidebar.number_input("İşçilik Maliyeti ($)", value=200)
-shipping = st.sidebar.number_input("Nakliye ($)", value=100)
-profit = st.sidebar.slider("Kar Oranı (%)", 0, 100, 25)
+    # --- HESAPLAMA MOTORU ---
+    # Adetler
+    nw = math.ceil(target_w / m["Genişlik"])
+    nh = math.ceil(target_h / m["Yükseklik"])
+    total_mod = nw * nh
+    
+    # Çözünürlük ve Teknik Veriler
+    res_w, res_h = nw * int(m["Res_W"]), nh * int(m["Res_H"])
+    total_px = res_w * res_h
+    
+    # Güç Kaynağı (PSU) Hesabı: (Adet * Watt) / (5V * Amper * 0.8 Emniyet)
+    psu_count = math.ceil((total_mod * m["Watt"]) / (5 * psu_amp * 0.8))
+    
+    # Novastar Receiver Hesabı
+    recv_count = math.ceil(total_px / 40000)
 
-# --- HESAPLAMALAR ---
-mod = DATA[env_type][selected_modul]
-nw = math.ceil(target_w / mod["w"])
-nh = math.ceil(target_h / mod["h"])
-total_mod = nw * nh
-res_w, res_h = nw * mod["res_w"], nh * mod["res_h"]
-total_px = res_w * res_h
+    # --- ANA EKRAN TASARIMI ---
+    st.header(f"🏗️ Proje Analizi: {project_name}")
+    st.info(f"Seçili Modül: **{selected_model}** | Parlaklık: **{m['Nit']} Nit**")
+    
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric("Toplam Modül", f"{total_mod} Adet", f"{nw}W x {nh}H")
+    with c2: st.metric("Çözünürlük", f"{res_w} x {res_h}")
+    with c3: st.metric("Güç Kaynağı", f"{psu_count} Adet", f"5V {psu_amp}A")
+    with c4: st.metric("Gerçek Ölçü", f"{nw*m['Genişlik']} x {nh*m['Yükseklik']} mm")
 
-psu_count = math.ceil((total_mod * mod["power"]) / 220)
-recv_count = math.ceil(total_px / 40000) # Güvenli bölge
-
-if multi_input:
-    sender_name = "Novastar VX400 (Processor)"
-    sender_price = 650
-else:
-    sender_name = "Novastar MSD300" if total_px < 1.3e6 else "Novastar MCTRL660"
-    sender_price = 180 if total_px < 1.3e6 else 450
-
-# MALİYET TABLOSU
-material_cost = (total_mod * mod["price"]) + (psu_count * 15) + (recv_count * 20) + sender_price + (total_mod * 2)
-total_expense = material_cost + labor + shipping
-final_price = total_expense * (1 + profit/100)
-
-# --- ANA EKRAN GÖRÜNÜMÜ ---
-st.header(f"📊 {project_name} - Özet")
-c1, c2, c3 = st.columns(3)
-c1.metric("Toplam Modül", f"{total_mod} Adet")
-c2.metric("Çözünürlük", f"{res_w}x{res_h}")
-c3.metric("Satış Fiyatı", f"${final_price:,.2f}")
-
-st.divider()
-st.subheader("📦 Malzeme Listesi")
-st.write(f"- **Modül:** {total_mod} Adet {selected_modul}")
-st.write(f"- **Güç Kaynağı:** {psu_count} Adet 5V 40A")
-st.write(f"- **Alıcı Kart:** {recv_count} Adet Novastar MRV")
-st.write(f"- **Kontrolcü:** 1 Adet {sender_name}")
-
-# --- PDF HAZIRLAMA BÖLÜMÜ ---
-def create_pdf():
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(190, 10, tr("LED EKRAN TEKLIF FORMU"), ln=True, align='C')
-    pdf.ln(10)
-    pdf.set_font("Arial", "", 12)
-    pdf.cell(190, 10, f"Proje: {tr(project_name)}", ln=True)
-    pdf.cell(190, 10, f"Modul: {tr(selected_modul)}", ln=True)
-    pdf.cell(190, 10, f"Boyut: {nw*mod['w']}mm x {nh*mod['h']}mm", ln=True)
-    pdf.cell(190, 10, f"Cozunurluk: {res_w}x{res_h} px", ln=True)
-    pdf.cell(190, 10, f"Kontrolcu: {tr(sender_name)}", ln=True)
-    pdf.ln(10)
-    pdf.set_font("Arial", "B", 14)
-    pdf.cell(190, 10, f"TOPLAM TEKLIF: ${final_price:,.2f}", ln=True, align='R')
-    return pdf.output(dest='S').encode('latin-1', 'ignore')
-
-# BUTONUN YERİ: Sidebar'ın en üstüne veya altına koyabiliriz. 
-# Burada hem ana sayfada hem sidebar'da gösteriyoruz ki kaçmasın.
-with st.sidebar:
     st.divider()
-    st.subheader("📑 Doküman")
-    pdf_file = create_pdf()
-    st.download_button(
-        label="📥 PDF OLARAK İNDİR",
-        data=pdf_file,
-        file_name="teklif.pdf",
-        mime="application/pdf",
-        use_container_width=True
-    )
+
+    # --- MALZEME TABLOSU ---
+    st.subheader("📋 Teknik Teklif Detayları")
+    items = [
+        {"Bileşen": f"Knexxons LED Modül ({selected_model})", "Adet": f"{total_mod} Adet", "Teknik Özellik": f"{m['Res_W']}x{m['Res_H']} px / {m['Nit']} Nit"},
+        {"Bileşen": f"5V {psu_amp}A Güç Kaynağı", "Adet": f"{psu_count} Adet", "Teknik Özellik": f"Verimlilik Odaklı %80 Load"},
+        {"Bileşen": "Novastar Alıcı Kart (MRV Serisi)", "Adet": f"{recv_count} Adet", "Teknik Özellik": "Yüksek Tazeleme Hızı"},
+        {"Bileşen": "Knexxons M4 Mıknatıs / Vida Seti", "Adet": f"{total_mod * 4} Adet", "Teknik Özellik": "Kolay Kurulum"},
+    ]
+    st.table(items)
+
+    # --- FİYATLANDIRMA ---
+    # Sheet'teki "Fiyat" sütununu kullanarak maliyet hesabı
+    material_cost = (total_mod * m["Fiyat"]) + (psu_count * 16) + (recv_count * 22) + (total_mod * 2)
+    final_sale = material_cost * (1 + profit_pct/100)
+    
+    st.success(f"### 💰 TAHMİNİ SATIŞ BEDELİ: ${final_sale:,.2f}")
+
+    # --- PDF FONKSİYONU ---
+    def generate_pdf():
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", "B", 18)
+        pdf.cell(190, 15, tr("KNEXXONS LED EKRAN TEKLIF FORMU"), ln=True, align='C')
+        pdf.ln(5)
+        pdf.set_font("Arial", "", 11)
+        pdf.cell(190, 8, f"Proje: {tr(project_name)}", ln=True)
+        pdf.cell(190, 8, f"Modul Tipi: {tr(selected_model)}", ln=True)
+        pdf.cell(190, 8, f"Ekran Boyutu: {nw*m['Genişlik']}mm x {nh*m['Yükseklik']}mm", ln=True)
+        pdf.cell(190, 8, f"Toplam Cozunurluk: {res_w} x {res_h} px", ln=True)
+        pdf.ln(10)
+        pdf.set_font("Arial", "B", 13)
+        pdf.cell(190, 10, tr("MALZEME LISTESI"), ln=True)
+        pdf.set_font("Arial", "", 10)
+        for item in items:
+            pdf.cell(190, 7, f"- {tr(item['Bileşen'])}: {item['Adet']}", ln=True)
+        pdf.ln(10)
+        pdf.set_font("Arial", "B", 14)
+        pdf.cell(190, 12, f"TOPLAM TEKLIF BEDELI: ${final_sale:,.2f}", ln=True, align='R')
+        return pdf.output(dest='S').encode('latin-1', 'ignore')
+
+    # --- PDF İNDİRME BUTONU ---
+    with st.sidebar:
+        st.divider()
+        st.download_button(
+            label="📥 PDF TEKLİF DOSYASI",
+            data=generate_pdf(),
+            file_name=f"{tr(project_name)}_teklif.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+
+else:
+    st.error("⚠️ Veri yüklenemedi. Lütfen Google Sheet linkini ve sütun isimlerini kontrol edin.")
