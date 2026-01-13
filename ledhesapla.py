@@ -3,13 +3,14 @@ import pandas as pd
 import math
 from fpdf import FPDF
 from datetime import datetime
-import urllib.request
+import requests
 from io import BytesIO
+from PIL import Image
 
-# --- YAPILANDIRMA ---
+# --- KONFİGÜRASYON ---
 SHEET_ID = "1HWfvaJgo_F-JrbQPbQahSUL9EeU8COTo-n1xxkaLfF0"
 SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
-# Logoyu ham (raw) formatta çekiyoruz
+# Logo için doğrudan RAW bağlantısı
 LOGO_URL = "https://raw.githubusercontent.com/tuncayG7/ledhesapla/main/G7_logo_lacivert.png"
 
 def tr(text):
@@ -17,34 +18,29 @@ def tr(text):
     for t, e in mapping.items(): text = str(text).replace(t, e)
     return text
 
+# --- PDF SINIFI ---
 class PDF(FPDF):
     def header(self):
         try:
-            req = urllib.request.Request(LOGO_URL, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as response:
-                logo_data = BytesIO(response.read())
-                self.image(logo_data, 10, 8, 40)
-            self.set_x(55)
+            resp = requests.get(LOGO_URL)
+            img = Image.open(BytesIO(resp.content))
+            self.image(img, 10, 8, 45) # Logo boyutu ayarlandı
+            self.set_x(60)
         except: pass
         
-        self.set_font('Arial', 'B', 20)
-        self.set_text_color(22, 43, 72)
-        self.cell(0, 10, 'G7 TEKNOLOJI', ln=True, align='L' if self.get_x() > 10 else 'C')
-        self.set_font('Arial', 'I', 9)
-        self.set_text_color(100, 100, 100)
-        if self.get_x() > 10: self.set_x(55)
-        self.cell(0, 5, 'Endustriyel LED Ekran Sistemleri ve Goruntu Teknolojileri', ln=True, align='L')
-        self.set_draw_color(22, 43, 72)
-        self.line(10, 32, 200, 32)
-        self.ln(10)
+        self.set_font('Arial', 'B', 22); self.set_text_color(22, 43, 72)
+        self.cell(0, 10, 'G7 TEKNOLOJI', ln=True, align='L')
+        self.set_font('Arial', 'I', 10); self.set_text_color(100, 100, 100)
+        if self.get_x() > 10: self.set_x(60)
+        self.cell(0, 5, 'Endustriyel LED Ekran ve Goruntu Teknolojileri', ln=True, align='L')
+        self.set_draw_color(22, 43, 72); self.line(10, 32, 200, 32); self.ln(12)
 
     def footer(self):
-        self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
-        self.cell(0, 10, f'G7 TEKNOLOJI | www.g7.com.tr | Sayfa {self.page_no()}', 0, 0, 'C')
+        self.set_y(-15); self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'G7 TEKNOLOJI | Teklif Formu | Sayfa {self.page_no()}', 0, 0, 'C')
 
-# --- VERİ VE ARAYÜZ ---
-st.set_page_config(page_title="G7 TEKNOLOJİ | Teklif Sistemi", layout="wide")
+# --- ANA PROGRAM ---
+st.set_page_config(page_title="G7 TEKNOLOJİ | Teklif Paneli", layout="wide")
 
 @st.cache_data(ttl=60)
 def load_data():
@@ -53,17 +49,25 @@ def load_data():
     return df
 
 inventory_df = load_data()
+
 if inventory_df is not None:
     with st.sidebar:
-        st.header("🏢 TEKLİF YÖNETİMİ")
+        st.header("🏢 PROJE AYARLARI")
         customer_name = st.text_input("Müşteri / Firma", "Sayın Müşteri")
-        project_name = st.text_input("Proje Tanımı", "İç Mekan LED Ekran Projesi")
-        selected_model = st.sidebar.selectbox("Model Seçin", inventory_df["Marka_Model"].tolist())
+        project_name = st.text_input("Proje Tanımı", "Knexxons Pro Serisi Kurulumu")
+        
+        selected_model = st.selectbox("LED Modül Modeli", inventory_df["Marka_Model"].tolist())
         m = inventory_df[inventory_df["Marka_Model"] == selected_model].iloc[0]
         
-        target_w = st.number_input("Genişlik (mm)", value=3840, step=int(m["Genişlik"]))
-        target_h = st.number_input("Yükseklik (mm)", value=2160, step=int(m["Yükseklik"]))
-        profit_pct = st.slider("Kar Oranı (%)", 0, 100, 30)
+        target_w = st.number_input("Ekran Genişliği (mm)", value=3840, step=int(m["Genişlik"]))
+        target_h = st.number_input("Ekran Yüksekliği (mm)", value=2160, step=int(m["Yükseklik"]))
+        
+        st.divider()
+        st.subheader("⚡ Donanım Tercihleri")
+        # PSU Seçimi Geri Eklendi
+        psu_amp = st.selectbox("PSU Amper Seçimi (A)", [40, 60, 80], index=0)
+        hizmet_bedeli = st.number_input("Kurulum ve Lojistik ($)", value=750)
+        profit_pct = st.slider("Kar Oranı (%)", 0, 100, 25)
 
     # --- HESAPLAMALAR ---
     nw, nh = math.ceil(target_w / m["Genişlik"]), math.ceil(target_h / m["Yükseklik"])
@@ -71,72 +75,81 @@ if inventory_df is not None:
     res_w, res_h = nw * int(m["Res_W"]), nh * int(m["Res_H"])
     total_px = res_w * res_h
     aspect_ratio = round(res_w / res_h, 2)
-    
-    # Güç ve Enerji (kVA Hesabı: (Watt * Modül) / 1000 * 1.2 verimlilik)
     total_kva = round((total_mod * m["Watt"] * 1.2) / 1000, 1)
-    
-    # Donanım
-    psu_count = math.ceil((total_mod * m["Watt"]) / 220) # 5V 40A PSU bazlı
-    recv_count = math.ceil(total_px / 40000)
-    
-    # Fiyat
-    unit_cost = (total_mod * m["Fiyat"]) + (psu_count * 18) + (recv_count * 25) + (total_mod * 2.5)
-    final_sale = unit_cost * (1 + profit_pct/100)
 
-    # --- EKRAN GÖRÜNÜMÜ ---
-    st.title(f"🔍 Teknik İnceleme: {selected_model}")
+    # Kontrolcü Zekası
+    if total_px > 2300000:
+        processor = "Novastar VX600 All-in-One"
+    elif total_px > 1300000:
+        processor = "Novastar VX400 All-in-One"
+    else:
+        processor = "Novastar MCTRL300 Sending Box"
+    
+    # PSU Adet Hesabı: Toplam Watt / (Voltaj(5V) * Amper * %80 Verim)
+    psu_count = math.ceil((total_mod * m["Watt"]) / (5 * psu_amp * 0.8))
+
+    # --- EKRAN DASHBOARD ---
+    st.title(f"📊 G7 Teknoloji Analiz Paneli")
+    st.info(f"Seçili Ürün: **{selected_model}** | Güç Kaynağı: **5V {psu_amp}A**")
+    
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Toplam Piksel", f"{total_px:,}")
-    col2.metric("Görüntü Formatı", f"{aspect_ratio}:1")
-    col3.metric("Maks. Güç", f"{total_kva} kVA")
-    col4.metric("Yenileme Hızı", "3840 Hz")
+    col1.metric("Çözünürlük", f"{res_w}x{res_h}", f"{total_px:,} Toplam Px")
+    col2.metric("Ekran Ölçüsü", f"{nw*m['Genişlik']}x{nh*m['Yükseklik']} mm", f"{aspect_ratio}:1 Format")
+    col3.metric("Enerji İhtiyacı", f"{total_kva} kVA", "Max Tüketim")
+    col4.metric("Donanım", f"{psu_count} Adet PSU", f"{psu_amp} Amper")
+
+    st.divider()
+
+    # --- TEKNİKLER TABLOSU ---
+    st.subheader("📝 Teklif Kalemleri")
+    table_items = [
+        {"Bileşen": "LED Ekran Modülü", "Marka / Model": f"Knexxons {selected_model}", "Adet": f"{total_mod} Adet", "Açıklama": f"{m['Nit']} Nit / 3840Hz"},
+        {"Bileşen": "Video İşlemci (Processor)", "Marka / Model": processor, "Adet": "1 Adet", "Açıklama": "Görüntü Yönetim Ünitesi"},
+        {"Bileşen": "Alıcı Kart (Receiver)", "Marka / Model": "Novastar MRV336", "Adet": f"{math.ceil(total_px/32000)} Adet", "Açıklama": "Piksel Sürme Kartı"},
+        {"Bileşen": "Güç Kaynağı (PSU)", "Marka / Model": f"5V {psu_amp}A High Efficiency", "Adet": f"{psu_count} Adet", "Açıklama": "Slim Tip Güç Ünitesi"},
+        {"Bileşen": "Hizmet Paketi", "Marka / Model": "G7 TEKNOLOJİ", "Adet": "1 Proje", "Açıklama": "Mühendislik, Nakliye, Kablolama, Kurulum"},
+    ]
+    st.table(table_items)
+    st.write("> *Not: Kurulum hizmetine Kabin Dışı Kablolama dahildir. Vinç ve Platform Müşteriye Aittir.*")
 
     # --- PDF OLUŞTURMA ---
-    def generate_pro_pdf():
+    def generate_pdf():
         pdf = PDF()
         pdf.add_page()
         
-        # Müşteri Bilgileri
-        pdf.set_font('Arial', 'B', 11)
-        pdf.set_fill_color(240, 240, 240)
-        pdf.cell(190, 8, tr("PROJE VE MUSTERI BILGILERI"), ln=True, fill=True)
+        pdf.set_font('Arial', 'B', 11); pdf.set_fill_color(240, 240, 240)
+        pdf.cell(190, 8, tr("PROJE VE MUSTERI DETAYLARI"), ln=True, fill=True)
         pdf.set_font('Arial', '', 10)
         pdf.cell(40, 7, " Musteri:"); pdf.cell(150, 7, tr(customer_name), ln=True)
-        pdf.cell(40, 7, " Proje Adi:"); pdf.cell(150, 7, tr(project_name), ln=True)
-        pdf.cell(40, 7, " Teklif Tarihi:"); pdf.cell(150, 7, datetime.now().strftime("%d/%m/%Y"), ln=True)
+        pdf.cell(40, 7, " Proje:"); pdf.cell(150, 7, tr(project_name), ln=True)
+        pdf.cell(40, 7, " Tarih:"); pdf.cell(150, 7, datetime.now().strftime("%d/%m/%Y"), ln=True)
         pdf.ln(5)
 
-        # Teknik Tablo
-        pdf.set_font('Arial', 'B', 11)
-        pdf.cell(190, 8, tr("TEKNIK SPEKTRUM VE DONANIM"), ln=True)
         pdf.set_font('Arial', 'B', 9); pdf.set_fill_color(22, 43, 72); pdf.set_text_color(255, 255, 255)
-        pdf.cell(130, 8, tr(" Urun / Donanim Tanimi"), 1, 0, 'L', True)
-        pdf.cell(60, 8, tr(" Teknik Detay / Adet"), 1, 1, 'C', True)
+        pdf.cell(75, 10, tr(" Urun / Hizmet"), 1, 0, 'L', True)
+        pdf.cell(70, 10, tr(" Marka / Model"), 1, 0, 'L', True)
+        pdf.cell(45, 10, tr(" Miktar"), 1, 1, 'C', True)
         
-        pdf.set_font('Arial', '', 9); pdf.set_text_color(0, 0, 0)
-        specs = [
-            (f"{selected_model} LED Ekran Modulu", f"{total_mod} Adet"),
-            ("Cozunurluk Yapisi", f"{res_w} x {res_h} (Toplam: {total_px:,} Px)"),
-            ("Goruntu Formati / Orani", f"{aspect_ratio}:1"),
-            ("Yenileme Hizi (Refresh Rate)", "3840 Hz"),
-            ("Maksimum Parlaklik", f"> {m['Nit']} cd/m2"),
-            ("Enerji Gereksinimi (Max)", f"{total_kva} kVA"),
-            ("Novastar Kontrol Sistemi", f"{recv_count} Alici Kart / 1 Adet Master"),
-            ("Montaj Ekipmanlari", "Knexxons Magnetik M4 Set")
-        ]
-        for spec, val in specs:
-            pdf.cell(130, 7, tr(f" {spec}"), 1)
-            pdf.cell(60, 7, tr(f" {val}"), 1, 1, 'C')
+        pdf.set_text_color(0, 0, 0); pdf.set_font('Arial', '', 8)
+        for row in table_items:
+            pdf.cell(75, 8, tr(f" {row['Bileşen']}"), 1)
+            pdf.cell(70, 8, tr(f" {row['Marka / Model']}"), 1)
+            pdf.cell(45, 8, tr(f" {row['Adet']}"), 1, 1, 'C')
 
-        # Fiyat Paneli
+        pdf.ln(5); pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, "TEKNIK VERILER:", ln=True)
+        pdf.set_font('Arial', '', 9)
+        pdf.cell(0, 6, tr(f"- Cozunurluk: {res_w}x{res_h} px (Toplam {total_px:,} Piksel)"), ln=True)
+        pdf.cell(0, 6, tr(f"- Enerji Tuketimi: {total_kva} kVA (Max Load)"), ln=True)
+        pdf.cell(0, 6, tr(f"- Parlaklik: {m['Nit']} Nit | Yenileme Hizi: 3840 Hz"), ln=True)
+
         pdf.ln(10)
-        pdf.set_font('Arial', 'B', 14); pdf.set_text_color(22, 43, 72)
-        pdf.cell(190, 15, f"TOPLAM PROJE BEDELI: ${final_sale:,.2f}", 1, 1, 'R')
+        # Basit fiyat hesabı (Hizmet bedeli dahil)
+        material_sum = (total_mod * m["Fiyat"]) + (psu_count * 20) + (math.ceil(total_px/32000) * 25)
+        total_price = (material_sum + hizmet_bedeli) * (1 + profit_pct/100)
         
-        pdf.set_font('Arial', 'I', 8); pdf.set_text_color(100, 100, 100)
-        pdf.multi_cell(0, 5, tr("\n* Fiyatlara KDV dahil degildir. \n* Knexxons moduller G7 TEKNOLOJI garantisi altindadir. \n* Teklif 10 gun sureyle gecerlidir."))
-        
+        pdf.set_font('Arial', 'B', 14); pdf.set_text_color(200, 0, 0)
+        pdf.cell(190, 12, f"TOPLAM TEKLIF BEDELI: ${total_price:,.2f}", 1, 1, 'R')
         return pdf.output(dest='S').encode('latin-1', 'ignore')
 
     st.sidebar.divider()
-    st.sidebar.download_button("📥 TEKNİK TEKLİFİ İNDİR (PDF)", generate_pro_pdf(), f"G7_{tr(customer_name)}.pdf", "application/pdf", use_container_width=True)
+    st.sidebar.download_button("📥 PROFESYONEL PDF'İ İNDİR", generate_pdf(), f"G7_{tr(customer_name)}.pdf", "application/pdf", use_container_width=True)
