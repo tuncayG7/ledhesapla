@@ -1,100 +1,109 @@
 import streamlit as st
 import math
+from fpdf import FPDF
 
-# --- GENİŞLETİLMİŞ VERİ TABANI ---
+# --- TÜRKÇE KARAKTER DÜZELTME ---
+def tr(text):
+    mapping = {"ç": "c", "Ç": "C", "ğ": "g", "Ğ": "G", "ı": "i", "İ": "I", "ö": "o", "Ö": "O", "ş": "s", "Ş": "S", "ü": "u", "Ü": "U"}
+    for t, e in mapping.items():
+        text = str(text).replace(t, e)
+    return text
+
+# --- SAYFA AYARLARI ---
+st.set_page_config(page_title="LED Pro", layout="wide")
+
+# --- VERİ TABANI ---
 DATA = {
     "İç Mekan (Indoor)": {
-        "Qiangli Q1.8": {"w": 320, "h": 160, "res_w": 172, "res_h": 86, "power": 30, "price": 45, "bright": "800 nit"},
-        "Qiangli Q2.5": {"w": 320, "h": 160, "res_w": 128, "res_h": 64, "power": 35, "price": 25, "bright": "1000 nit"},
-        "Qiangli Q3": {"w": 192, "h": 192, "res_w": 64, "res_h": 64, "power": 25, "price": 18, "bright": "1100 nit"}
+        "Qiangli Q1.8": {"w": 320, "h": 160, "res_w": 172, "res_h": 86, "power": 30, "price": 45},
+        "Qiangli Q2.5": {"w": 320, "h": 160, "res_w": 128, "res_h": 64, "power": 35, "price": 25},
+        "Qiangli Q3": {"w": 192, "h": 192, "res_w": 64, "res_h": 64, "power": 25, "price": 18}
     },
     "Dış Mekan (Outdoor)": {
-        "Qiangli P4 Outdoor": {"w": 320, "h": 160, "res_w": 80, "res_h": 40, "power": 45, "price": 35, "bright": "5500 nit"},
-        "Qiangli P5 Outdoor": {"w": 320, "h": 160, "res_w": 64, "res_h": 32, "power": 50, "price": 28, "bright": "6000 nit"},
-        "Qiangli P10 Outdoor": {"w": 320, "h": 160, "res_w": 32, "res_h": 16, "power": 40, "price": 20, "bright": "6500 nit"}
+        "Qiangli P4 Outdoor": {"w": 320, "h": 160, "res_w": 80, "res_h": 40, "power": 45, "price": 35},
+        "Qiangli P10 Outdoor": {"w": 320, "h": 160, "res_w": 32, "res_h": 16, "power": 40, "price": 20}
     }
 }
 
-st.set_page_config(page_title="LED Pro Enterprise", layout="wide")
-st.title("🏗️ Profesyonel LED Ekran Projelendirme ve Teklif Sistemi")
+# --- SOL PANEL (INPUTS) ---
+st.sidebar.header("🔧 PROJE AYARLARI")
+project_name = st.sidebar.text_input("Proje Adı", "Yeni Proje")
+env_type = st.sidebar.radio("Ortam", list(DATA.keys()))
+selected_modul = st.sidebar.selectbox("Modül Seçin", list(DATA[env_type].keys()))
 
-# --- YAN PANEL (GİRDİLER) ---
-with st.sidebar:
-    st.header("1. Teknik Konfigürasyon")
-    env_type = st.radio("Kullanım Alanı", ["İç Mekan (Indoor)", "Dış Mekan (Outdoor)"])
-    selected_modul = st.selectbox("Modül Seçin", list(DATA[env_type].keys()))
-    
-    target_w = st.number_input("Genişlik (mm)", value=3840, step=160)
-    target_h = st.number_input("Yükseklik (mm)", value=2160, step=160)
-    
-    st.divider()
-    st.header("2. Kontrol & Girişler")
-    multi_input = st.toggle("Birden Fazla Video Girişi (HDMI/SDI/DP)", value=False)
-    
-    st.divider()
-    st.header("3. Operasyonel Giderler ($)")
-    labor_cost = st.number_input("Montaj ve İşçilik", value=250)
-    shipping_cost = st.number_input("Nakliye ve Lojistik", value=100)
-    fixed_overhead = st.number_input("Diğer Sabit Giderler", value=50)
-    
-    st.divider()
-    profit_margin = st.slider("Hedef Kar Marjı (%)", 5, 100, 25)
+target_w = st.sidebar.number_input("Genişlik (mm)", value=3200)
+target_h = st.sidebar.number_input("Yükseklik (mm)", value=1920)
 
-# --- HESAPLAMA MOTORU ---
+multi_input = st.sidebar.toggle("Çoklu Giriş (Processor Gerekir)", value=False)
+labor = st.sidebar.number_input("İşçilik Maliyeti ($)", value=200)
+shipping = st.sidebar.number_input("Nakliye ($)", value=100)
+profit = st.sidebar.slider("Kar Oranı (%)", 0, 100, 25)
+
+# --- HESAPLAMALAR ---
 mod = DATA[env_type][selected_modul]
-
 nw = math.ceil(target_w / mod["w"])
 nh = math.ceil(target_h / mod["h"])
 total_mod = nw * nh
-
 res_w, res_h = nw * mod["res_w"], nh * mod["res_h"]
 total_px = res_w * res_h
 
-# Donanım Seçimi
 psu_count = math.ceil((total_mod * mod["power"]) / 220)
-recv_count = math.ceil(total_px / (128 * 256)) # Güvenli sınır
+recv_count = math.ceil(total_px / 40000) # Güvenli bölge
 
 if multi_input:
-    sender_name = "Novastar VX400 (Processor)" if total_px < 2.3e6 else "Novastar VX600 (Processor)"
-    sender_price = 650 if total_px < 2.3e6 else 1150
+    sender_name = "Novastar VX400 (Processor)"
+    sender_price = 650
 else:
-    sender_name = "Novastar MSD300 (Sender)" if total_px < 1.3e6 else "Novastar MCTRL660 (Box)"
-    sender_price = 180 if total_px < 1.3e6 else 480
+    sender_name = "Novastar MSD300" if total_px < 1.3e6 else "Novastar MCTRL660"
+    sender_price = 180 if total_px < 1.3e6 else 450
 
-# --- MALİYET ANALİZİ ---
-items = [
-    {"Ürün": f"{selected_modul} Modül", "Adet": total_mod, "Birim $": mod["price"]},
-    {"Ürün": "Güç Kaynağı (5V 40A/60A)", "Adet": psu_count, "Birim $": 14},
-    {"Ürün": "Novastar Alıcı Kart", "Adet": recv_count, "Birim $": 18},
-    {"Ürün": f"Kontrolcü: {sender_name}", "Adet": 1, "Birim $": sender_price},
-    {"Ürün": "Mıknatıs / Bağlantı Aparatı", "Adet": total_mod * 4, "Birim $": 0.45},
-]
+# MALİYET TABLOSU
+material_cost = (total_mod * mod["price"]) + (psu_count * 15) + (recv_count * 20) + sender_price + (total_mod * 2)
+total_expense = material_cost + labor + shipping
+final_price = total_expense * (1 + profit/100)
 
-material_cost = sum(i["Adet"] * i["Birim $"] for i in items)
-total_expense = material_cost + labor_cost + shipping_cost + fixed_overhead
-final_sale_price = total_expense * (1 + profit_margin / 100)
-
-# --- ARAYÜZ ---
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Gerçek Ölçü", f"{nw * mod['w']} x {nh * mod['h']} mm")
-c2.metric("Toplam Modül", f"{total_mod} Adet")
-c3.metric("Çözünürlük", f"{res_w}x{res_h} px")
-c4.metric("Net Maliyet", f"${total_expense:,.0f}")
+# --- ANA EKRAN GÖRÜNÜMÜ ---
+st.header(f"📊 {project_name} - Özet")
+c1, c2, c3 = st.columns(3)
+c1.metric("Toplam Modül", f"{total_mod} Adet")
+c2.metric("Çözünürlük", f"{res_w}x{res_h}")
+c3.metric("Satış Fiyatı", f"${final_price:,.2f}")
 
 st.divider()
+st.subheader("📦 Malzeme Listesi")
+st.write(f"- **Modül:** {total_mod} Adet {selected_modul}")
+st.write(f"- **Güç Kaynağı:** {psu_count} Adet 5V 40A")
+st.write(f"- **Alıcı Kart:** {recv_count} Adet Novastar MRV")
+st.write(f"- **Kontrolcü:** 1 Adet {sender_name}")
 
-col_a, col_b = st.columns([2, 1])
+# --- PDF HAZIRLAMA BÖLÜMÜ ---
+def create_pdf():
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(190, 10, tr("LED EKRAN TEKLIF FORMU"), ln=True, align='C')
+    pdf.ln(10)
+    pdf.set_font("Arial", "", 12)
+    pdf.cell(190, 10, f"Proje: {tr(project_name)}", ln=True)
+    pdf.cell(190, 10, f"Modul: {tr(selected_modul)}", ln=True)
+    pdf.cell(190, 10, f"Boyut: {nw*mod['w']}mm x {nh*mod['h']}mm", ln=True)
+    pdf.cell(190, 10, f"Cozunurluk: {res_w}x{res_h} px", ln=True)
+    pdf.cell(190, 10, f"Kontrolcu: {tr(sender_name)}", ln=True)
+    pdf.ln(10)
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(190, 10, f"TOPLAM TEKLIF: ${final_price:,.2f}", ln=True, align='R')
+    return pdf.output(dest='S').encode('latin-1', 'ignore')
 
-with col_a:
-    st.subheader("📋 Detaylı Malzeme Listesi")
-    st.table(items)
-    
-with col_b:
-    st.subheader("💰 Finansal Özet")
-    st.write(f"**Malzeme Toplamı:** ${material_cost:,.2f}")
-    st.write(f"**Operasyonel Giderler:** ${labor_cost + shipping_cost + fixed_overhead:,.2f}")
-    st.write(f"**Hedef Kar:** ${final_sale_price - total_expense:,.2f}")
-    st.info(f"### Önerilen Satış: ${final_sale_price:,.2f}")
-
-st.divider()
-st.caption(f"ℹ️ {sender_name} seçildi. Toplam yönetilen piksel: {total_px:,}. {env_type} standartlarında hesaplanmıştır.")
+# BUTONUN YERİ: Sidebar'ın en üstüne veya altına koyabiliriz. 
+# Burada hem ana sayfada hem sidebar'da gösteriyoruz ki kaçmasın.
+with st.sidebar:
+    st.divider()
+    st.subheader("📑 Doküman")
+    pdf_file = create_pdf()
+    st.download_button(
+        label="📥 PDF OLARAK İNDİR",
+        data=pdf_file,
+        file_name="teklif.pdf",
+        mime="application/pdf",
+        use_container_width=True
+    )
