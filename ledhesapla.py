@@ -10,6 +10,7 @@ from PIL import Image
 # --- KONFIGURASYON ---
 SHEET_ID = "1a6P6Jr_yaiDvbnh3OJ8z_whw1txGOjmyzT0U0jWZTDw"
 SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
+# Logo için doğrudan raw linki kullanıyoruz
 LOGO_URL = "https://raw.githubusercontent.com/tuncayG7/ledhesapla/main/G7_logo_lacivert.png"
 
 st.set_page_config(page_title="G7 TEKNOLOJI | Teklif Paneli", layout="wide")
@@ -31,14 +32,18 @@ def load_data():
 
 # --- PROFESYONEL PDF SINIFI ---
 class G7_Technical_PDF(FPDF):
+    def __init__(self, logo_img=None):
+        super().__init__()
+        self.logo_img = logo_img
+
     def header(self):
-        try:
-            resp = requests.get(LOGO_URL, timeout=10)
-            if resp.status_code == 200:
-                img = Image.open(BytesIO(resp.content))
-                self.image(img, 10, 8, 40)
-        except:
-            pass
+        if self.logo_img:
+            try:
+                # Logoyu sol üste 40mm genişliğinde yerleştir
+                self.image(self.logo_img, 10, 8, 40)
+            except:
+                pass
+        
         self.set_font('Arial', 'B', 15)
         self.set_text_color(22, 43, 72)
         self.set_x(55)
@@ -55,21 +60,28 @@ class G7_Technical_PDF(FPDF):
 df = load_data()
 
 if df is not None:
+    # Logonun önceden yüklenmesi (Hata riskini azaltmak için)
+    logo_for_pdf = None
+    try:
+        resp = requests.get(LOGO_URL, timeout=10)
+        if resp.status_code == 200:
+            logo_for_pdf = Image.open(BytesIO(resp.content))
+    except:
+        pass
+
     with st.sidebar:
         st.header("📋 PROJE AYARLARI")
         customer = st.text_input("Musteri / Proje Adi", "Sayin Musteri")
         moduller = df[df['tip'].str.contains('modul', case=False, na=False)]
-        
         env_choice = st.selectbox("Ortam", sorted(moduller['ortam'].unique()))
         tech_choice = st.selectbox("Teknoloji", sorted(moduller[moduller['ortam'] == env_choice]['teknoloji'].unique()))
         final_list = moduller[(moduller['ortam'] == env_choice) & (moduller['teknoloji'] == tech_choice)]['model'].tolist()
         sel_model = st.selectbox("Modul Secin", final_list)
-        
         w_mm = st.number_input("Genislik (mm)", value=3840, step=320)
         h_mm = st.number_input("Yukseklik (mm)", value=2160, step=160)
         profit = st.slider("Kar Marji (%)", 0, 100, 25)
 
-    # --- HESAPLAMA MOTORU ---
+    # --- HESAPLAMALAR ---
     m = df[df['model'] == sel_model].iloc[0]
     nw, nh = math.ceil(w_mm / m['genislik']), math.ceil(h_mm / m['yukseklik'])
     total_mod = nw * nh
@@ -77,7 +89,6 @@ if df is not None:
     total_px = res_w * res_h
     m2 = (w_mm * h_mm) / 1_000_000
     
-    # Bilesenleri Cek
     psu_count = math.ceil(total_mod / 8)
     psu_row = df[df['tip'].str.contains('psu|power', case=False, na=False)].iloc[0]
     recv_count = math.ceil(total_px / 32768)
@@ -94,39 +105,46 @@ if df is not None:
         {"Urun": f"Video Processor: {selected_proc['model']}", "Adet": 1, "Birim": "Adet", "B_Fiyat": float(selected_proc['msrp'])},
         {"Urun": f"Kasa ve Montaj Sasesi ({env_choice})", "Adet": round(m2, 2), "Birim": "m2", "B_Fiyat": box_unit}
     ]
-    
-    # Genel Toplam Hesaplama (Hizmet %10 + Kar Marji)
+    if env_choice.lower() == "indoor":
+        items.append({"Urun": "Modul Magneti (Neodyum)", "Adet": total_mod * 8, "Birim": "Adet", "B_Fiyat": 0.20})
+
     raw_cost = sum(i['Adet'] * i['B_Fiyat'] for i in items)
     grand_total = (raw_cost * 1.10) * (1 + profit/100)
 
     # --- EKRAN GOSTERIMI ---
-    st.title(f"🚀 G7 TEKNOLOJI | {customer}")
+    st.title(f"🚀 {customer}")
     
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("TOPLAM TEKLIF", f"$ {grand_total:,.2f}")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("TOPLAM FIYAT", f"$ {grand_total:,.2f}")
     c2.metric("COZUNURLUK", f"{res_w}x{res_h}")
-    c3.metric("TOPLAM MODUL", f"{total_mod} Adet")
-    c4.metric("TOPLAM PSU", f"{psu_count} Adet")
+    c3.metric("TOPLAM PX", f"{total_px:,}")
+    c4.metric("MODUL", f"{total_mod}")
+    c5.metric("PSU", f"{psu_count}")
 
     st.divider()
-    st.subheader("📦 Detayli Malzeme Listesi")
+    st.subheader("📦 Malzeme Listesi")
     
-    ui_df = pd.DataFrame(items)
-    # Hata veren satir burada duzeltildi:
-    ui_df['Birim Satis ($)'] = ui_df['B_Fiyat'] * 1.10 * (1 + profit/100)
-    ui_df['Toplam ($)'] = ui_df['Adet'] * ui_df['Birim Satis ($)']
+    # Ekranda Adet Formatlama (Kasa hariç Tam Sayı)
+    display_df = pd.DataFrame(items)
+    display_df['Birim $'] = display_df['B_Fiyat'] * 1.10 * (1 + profit/100)
+    display_df['Toplam $'] = display_df['Adet'] * display_df['Birim $']
     
-    st.table(ui_df[['Urun', 'Adet', 'Birim', 'Birim Satis ($)', 'Toplam ($)']].style.format(precision=2))
+    def format_adet_ui(row):
+        return f"{row['Adet']:.2f}" if "Kasa" in row['Urun'] else f"{int(row['Adet'])}"
+    
+    display_df['Adet'] = display_df.apply(format_adet_ui, axis=1)
+    
+    st.dataframe(display_df[['Urun', 'Adet', 'Birim', 'Birim $', 'Toplam $']], use_container_width=True, hide_index=True)
 
     # --- PDF GENERATOR ---
     def generate_pdf():
-        pdf = G7_Technical_PDF()
+        pdf = G7_Technical_PDF(logo_img=logo_for_pdf)
         pdf.add_page()
         pdf.set_font('Arial', 'B', 12)
         pdf.cell(0, 10, tr(f"PROJE: {customer.upper()}"), 0, 1)
         pdf.set_font('Arial', '', 10)
-        pdf.cell(100, 6, f"Tarih: {datetime.now().strftime('%d.%m.%Y')}", 0, 0)
-        pdf.cell(0, 6, tr(f"Ekran: {w_mm}x{h_mm} mm | Alan: {m2:.2f} m2"), 0, 1, 'R')
+        pdf.cell(100, 6, tr(f"Tarih: {datetime.now().strftime('%d.%m.%Y')}"), 0, 0)
+        pdf.cell(0, 6, tr(f"Cozunurluk: {res_w}x{res_h} ({total_px:,} px)"), 0, 1, 'R')
         pdf.ln(5)
 
         # Tablo Basligi
@@ -141,17 +159,18 @@ if df is not None:
         for i in items:
             s_birim = i['B_Fiyat'] * 1.10 * (1 + profit/100)
             s_toplam = i['Adet'] * s_birim
+            
+            # PDF ADET FORMATI: Kasa degilse int yap
+            qty_text = f"{i['Adet']:.2f}" if "Kasa" in i['Urun'] else f"{int(i['Adet'])}"
+            
             pdf.cell(85, 10, tr(f" {i['Urun']}"), 1)
-            pdf.cell(25, 10, f"{i['Adet']} {i['Birim']}", 1, 0, 'C')
+            pdf.cell(25, 10, tr(f"{qty_text} {i['Birim']}"), 1, 0, 'C')
             pdf.cell(40, 10, f"$ {s_birim:,.2f}", 1, 0, 'R')
             pdf.cell(40, 10, f"$ {s_toplam:,.2f}", 1, 1, 'R')
 
-        # Toplam Satiri
-        pdf.ln(5)
-        pdf.set_font('Arial', 'B', 12)
+        pdf.ln(5); pdf.set_font('Arial', 'B', 12)
         pdf.cell(150, 10, tr("GENEL TOPLAM (KDV HARIC): "), 0, 0, 'R')
         pdf.cell(40, 10, f"$ {grand_total:,.2f}", 1, 1, 'R')
-        
         return pdf.output(dest='S').encode('latin-1', 'ignore')
 
-    st.download_button("📥 Profesyonel PDF Teklifini Indir", generate_pdf(), f"G7_Teklif_{customer}.pdf", "application/pdf", use_container_width=True)
+    st.download_button("📥 PDF TEKLIFI INDIR", generate_pdf(), f"G7_{customer}.pdf", "application/pdf", use_container_width=True)
