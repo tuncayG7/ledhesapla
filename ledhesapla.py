@@ -1,4 +1,7 @@
 import streamlit as st
+st.write("Sistem Bağlantısı Başarılı!")
+
+import streamlit as st
 import pandas as pd
 import math
 from fpdf import FPDF
@@ -168,3 +171,4 @@ if df is not None:
         )
 
     st.success(f"Kasa birim fiyati {env_choice} icin ${box_unit}/m2 olarak uygulandi.")
+
