@@ -7,115 +7,111 @@ import requests
 from io import BytesIO
 from PIL import Image
 
-# --- KONFIGURASYON ---
+# --- AYARLAR ---
 SHEET_ID = "1a6P6Jr_yaiDvbnh3OJ8z_whw1txGOjmyzT0U0jWZTDw"
 SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
+# Logonun GitHub üzerindeki doğrudan linki
 LOGO_URL = "https://raw.githubusercontent.com/tuncayG7/ledhesapla/main/G7_logo_lacivert.png"
 
-st.set_page_config(page_title="G7 TEKNOLOJI | Teklif Paneli", layout="wide")
+st.set_page_config(page_title="G7 TEKNOLOJI | Teknik Teklif", layout="wide")
 
 def tr(text):
     m = {"ç":"c","Ç":"C","ğ":"g","Ğ":"G","ı":"i","İ":"I","ö":"o","Ö":"O","ş":"s","Ş":"S","ü":"u","Ü":"U"}
     for k, v in m.items(): text = str(text).replace(k, v)
     return text
 
-@st.cache_data(ttl=10) # Test aşamasında hızlı yenileme için 10 saniye
+@st.cache_data(ttl=10)
 def load_data():
     try:
         df = pd.read_csv(SHEET_URL)
         df.columns = df.columns.str.strip().str.lower()
         return df
     except Exception as e:
-        st.error(f"⚠️ Tablo Okunurken Hata Oluştu: {e}")
+        st.error(f"Veri hatasi: {e}")
         return None
 
-# PDF SINIFI
-class G7_PDF(FPDF):
+# --- PDF SINIFI (LOGO DESTEKLI) ---
+class G7_Technical_PDF(FPDF):
     def header(self):
+        # LOGO EKLEME
         try:
-            resp = requests.get(LOGO_URL, timeout=5)
-            img = Image.open(BytesIO(resp.content))
-            self.image(img, 10, 8, 45)
-        except: pass
-        self.set_font('Arial', 'B', 16)
+            resp = requests.get(LOGO_URL, timeout=10)
+            if resp.status_code == 200:
+                img = Image.open(BytesIO(resp.content))
+                # x=10, y=8 koordinatlarına 40mm genişliğinde logoyu basar
+                self.image(img, 10, 8, 40)
+        except Exception as e:
+            # Logo çekilemezse hata basma, boş geç (PDF'in çökmemesi için)
+            pass
+            
+        self.set_font('Arial', 'B', 15)
         self.set_text_color(22, 43, 72)
-        self.set_x(60)
-        self.cell(0, 10, 'G7 TEKNOLOJI', ln=True, align='L')
-        self.line(10, 32, 200, 32)
-        self.ln(15)
+        self.set_x(55)
+        self.cell(0, 10, 'TEKNIK TEKLIF FORMU', ln=True, align='L')
+        self.set_font('Arial', 'I', 9)
+        self.set_x(55)
+        self.cell(0, 5, 'G7 TEKNOLOJI LED EKRAN COZUMLERI', ln=True, align='L')
+        self.ln(12)
+        # Kurumsal çizgi
+        self.set_draw_color(22, 43, 72)
+        self.line(10, 35, 200, 35)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Sayfa {self.page_no()} | G7 Teknoloji', 0, 0, 'C')
 
 df = load_data()
 
-# --- VERI KONTROLÜ VE UYGULAMA ---
 if df is not None:
-    if 'tip' not in df.columns:
-        st.warning("❌ HATA: Google Sheets'te 'tip' sütunu bulunamadı. Lütfen sütun isimlerini kontrol edin.")
-        st.write("Mevcut Sütunlar:", list(df.columns))
-    else:
-        # --- SIDEBAR ---
-        with st.sidebar:
-            st.header("🔍 ÜRÜN SEÇİMİ")
-            customer = st.text_input("Müşteri Adı", "Sayın Müşteri")
-            
-            moduller = df[df['tip'].str.contains('modul', case=False, na=False)]
-            
-            if not moduller.empty:
-                env_choice = st.selectbox("Kullanım Ortamı", sorted(moduller['ortam'].unique()))
-                tech_choice = st.selectbox("Teknoloji", sorted(moduller[moduller['ortam'] == env_choice]['teknoloji'].unique()))
-                
-                final_list = moduller[(moduller['ortam'] == env_choice) & (moduller['teknoloji'] == tech_choice)]['model'].tolist()
-                
-                if final_list:
-                    sel_model = st.selectbox("Model Seçin", final_list)
-                    w_mm = st.number_input("Genişlik (mm)", value=3840, step=320)
-                    h_mm = st.number_input("Yükseklik (mm)", value=2160, step=160)
-                    profit = st.slider("Kar Marjı (%)", 0, 100, 25)
-                    has_box = st.checkbox("Kasa Dahil", value=True)
-                else:
-                    st.error("Model Bulunamadı.")
-                    st.stop()
-            else:
-                st.error("Tabloda hiç modül tanımlanmamış!")
-                st.stop()
-
-        # --- HESAPLAMA ---
-        m = df[df['model'] == sel_model].iloc[0]
-        nw, nh = math.ceil(w_mm / m['genislik']), math.ceil(h_mm / m['yukseklik'])
-        total_mod = nw * nh
-        total_px = (nw * m['res_w']) * (nh * m['res_h'])
-        m2 = (w_mm * h_mm) / 1_000_000
+    # --- YAN MENU ---
+    with st.sidebar:
+        st.header("📋 PROJE DETAYLARI")
+        customer = st.text_input("Musteri / Proje Adi", "Sayin Musteri")
+        moduller = df[df['tip'].str.contains('modul', case=False, na=False)]
+        env_choice = st.selectbox("Ortam", sorted(moduller['ortam'].unique()))
+        tech_choice = st.selectbox("Teknoloji", sorted(moduller[moduller['ortam'] == env_choice]['teknoloji'].unique()))
         
-        procs = df[df['tip'].str.contains('processor', case=False, na=False)].sort_values('res_w')
-        selected_proc = procs[procs['res_w'] >= total_px].iloc[0] if not procs[procs['res_w'] >= total_px].empty else procs.iloc[-1]
+        final_list = moduller[(moduller['ortam'] == env_choice) & (moduller['teknoloji'] == tech_choice)]['model'].tolist()
+        sel_model = st.selectbox("Modul Secin", final_list)
         
-        elek_maliyet = (total_mod * float(m['msrp'])) + (math.ceil(total_px/32000) * 35) + (math.ceil(total_mod/8) * 22) + float(selected_proc['msrp'])
-        box_unit = 170 if env_choice.lower() == "outdoor" else 80
-        box_maliyet = (m2 * box_unit) if has_box else 0
-        hizmet = (elek_maliyet + box_maliyet) * 0.10
-        final_sale = (elek_maliyet + box_maliyet + hizmet) * (1 + profit/100)
+        w_mm = st.number_input("Genislik (mm)", value=3840, step=320)
+        h_mm = st.number_input("Yukseklik (mm)", value=2160, step=160)
+        profit = st.slider("Kar Marji (%)", 0, 100, 25)
 
-        # --- GÖRÜNÜM ---
-        st.title(f"🚀 G7 TEKNOLOJİ | {sel_model}")
-        st.subheader(f"Teklif Özeti - {customer}")
-        
-        c1, c2, c3 = st.columns(3)
-        c1.metric("TOPLAM SATIŞ", f"$ {final_sale:,.2f}")
-        c2.metric("Hizmet Payı", f"$ {hizmet*(1+profit/100):,.2f}")
-        c3.metric("Çözünürlük", f"{int(nw*m['res_w'])}x{int(nh*m['res_h'])}")
-        
-        st.divider()
-        st.table([
-            {"Kalem": "Elektronik", "Detay": f"{sel_model} + {selected_proc['model']}", "Tutar": f"$ {elek_maliyet*(1+profit/100):,.2f}"},
-            {"Kalem": "Kasa", "Detay": f"{env_choice} ({m2:.2f} m2)", "Tutar": f"$ {box_maliyet*(1+profit/100):,.2f}"}
-        ])
+    # --- TEKNIK HESAPLAMALAR ---
+    m = df[df['model'] == sel_model].iloc[0]
+    nw, nh = math.ceil(w_mm / m['genislik']), math.ceil(h_mm / m['yukseklik'])
+    total_mod = nw * nh
+    res_w, res_h = int(nw * m['res_w']), int(nh * m['res_h'])
+    total_px = res_w * res_h
+    m2 = (w_mm * h_mm) / 1_000_000
+    
+    # Bileşenleri Bul
+    psu_count = math.ceil(total_mod / 8)
+    psu_row = df[df['tip'].str.contains('psu|power', case=False, na=False)].iloc[0]
+    recv_count = math.ceil(total_px / 32768)
+    recv_row = df[df['tip'].str.contains('receiver', case=False, na=False)].iloc[0]
+    procs = df[df['tip'].str.contains('processor', case=False, na=False)].sort_values('res_w')
+    selected_proc = procs[procs['res_w'] >= total_px].iloc[0] if not procs[procs['res_w'] >= total_px].empty else procs.iloc[-1]
 
-        # PDF Butonu (Basitleştirilmiş)
-        def make_pdf():
-            pdf = G7_PDF()
-            pdf.add_page()
-            pdf.set_font('Arial', 'B', 14)
-            pdf.cell(0, 10, tr(f"TEKLIF: {customer.upper()}"), ln=True)
-            pdf.cell(0, 10, f"TOPLAM: $ {final_sale:,.2f}", ln=True)
-            return pdf.output(dest='S').encode('latin-1', 'ignore')
+    # --- MALZEME LISTESI ---
+    box_unit = 170 if env_choice.lower() == "outdoor" else 80
+    items = [
+        {"Urun": f"LED Modul: {m['model']}", "Adet": total_mod, "Birim": "Adet", "B_Fiyat": float(m['msrp'])},
+        {"Urun": f"Receiver Kart: {recv_row['model']}", "Adet": recv_count, "Birim": "Adet", "B_Fiyat": float(recv_row['msrp'])},
+        {"Urun": f"Guc Kaynagi: {psu_row['model']}", "Adet": psu_count, "Birim": "Adet", "B_Fiyat": float(psu_row['msrp'])},
+        {"Urun": f"Video Processor: {selected_proc['model']}", "Adet": 1, "Birim": "Adet", "B_Fiyat": float(selected_proc['msrp'])},
+        {"Urun": f"Kasa ve Montaj Sasesi ({env_choice})", "Adet": round(m2, 2), "Birim": "m2", "B_Fiyat": box_unit}
+    ]
+    
+    # Kar ve Hizmet Dahil Toplam Satış Fiyatları
+    raw_cost = sum(i['Adet'] * i['B_Fiyat'] for i in items)
+    grand_total = (raw_cost * 1.10) * (1 + profit/100) # %10 hizmet + kar
 
-        st.download_button("📥 PDF İndir", make_pdf(), f"Teklif_{customer}.pdf", "application/pdf")
+    # --- EKRAN GOSTERIMI ---
+    st.title("G7 Teknoloji Teklif Hazirlama")
+    st.write(f"### **{customer}** - Teknik Detaylar")
+    
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("TOPLAM SAT
